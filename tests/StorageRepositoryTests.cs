@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Xunit;
+using SharpStorage.src;
 
 namespace SharpStorage.Tests {
   public sealed class StorageRepositoryTests : IDisposable {
@@ -256,8 +257,91 @@ namespace SharpStorage.Tests {
       Assert.Equal(2, (await first.GetAllAsync()).Count);
     }
 
+    [Fact]
+    public async Task UpdateAsync_ChangesNestedItems_AndPersistsTheirOrder() {
+      string path = NewFile("workspace.json");
+      StorageRepository<Workspace> repo = new(path, static w => w.Id);
+      await repo.AddAsync(new Workspace(FirstId, []));
+
+      Assert.True(await repo.UpdateAsync(FirstId, workspace => workspace with {
+        Items = [new WorkItem(SecondId, "first"), new WorkItem(Guid.NewGuid(), "second")]
+      }));
+
+      Workspace? loaded = await new StorageRepository<Workspace>(path,
+        static w => w.Id).GetAsync(FirstId);
+      Assert.NotNull(loaded);
+      Assert.Equal(["first", "second"], loaded.Items.Select(item => item.Name));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ConcurrentInstances_DoNotLoseUpdates() {
+      string path = NewFile("concurrent-update.json");
+      StorageRepository<Workspace> first = new(path, static w => w.Id);
+      StorageRepository<Workspace> second = new(path, static w => w.Id);
+      await first.AddAsync(new Workspace(FirstId, []));
+
+      bool[] results = await Task.WhenAll(
+        first.UpdateAsync(FirstId, workspace => workspace with {
+          Items = [.. workspace.Items, new WorkItem(Guid.NewGuid(), "one")]
+        }),
+        second.UpdateAsync(FirstId, workspace => workspace with {
+          Items = [.. workspace.Items, new WorkItem(Guid.NewGuid(), "two")]
+        })
+      );
+
+      Assert.All(results, Assert.True);
+      Workspace? loaded = await first.GetAsync(FirstId);
+      Assert.NotNull(loaded);
+      Assert.Equal(["one", "two"], loaded.Items.Select(item => item.Name)
+        .OrderBy(name => name));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_RejectsMissingAndInvalidUpdates_WithoutWriting() {
+      string path = NewFile("invalid-update.json");
+      StorageRepository<Entry> repo = new(path, static e => e.Id);
+      await repo.AddAsync(new Entry(FirstId, "original"));
+      string before = await File.ReadAllTextAsync(path);
+
+      Assert.False(await repo.UpdateAsync(SecondId, _ =>
+        throw new InvalidOperationException("Callback should not run")
+      ));
+      await Assert.ThrowsAsync<ArgumentNullException>(() =>
+        repo.UpdateAsync(FirstId, null!)
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdateAsync(FirstId, _ => new Entry(SecondId, "wrong ID"))
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdateAsync(FirstId, _ => null!)
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdateAsync(FirstId, _ => throw new InvalidOperationException("failed"))
+      );
+
+      Assert.Equal(before, await File.ReadAllTextAsync(path));
+      Assert.Empty(Directory.GetFiles(_dir, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_RejectsLegacyDuplicateIds_WithoutWriting() {
+      string path = NewFile("duplicate-update.json");
+      string before = SerializeDocument([
+        new Entry(FirstId, "one"), new Entry(FirstId, "two")
+      ]);
+      await File.WriteAllTextAsync(path, before);
+      StorageRepository<Entry> repo = new(path, static e => e.Id);
+
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdateAsync(FirstId, entry => entry with { Name = "updated" })
+      );
+      Assert.Equal(before, await File.ReadAllTextAsync(path));
+    }
+
     private record Entry(Guid Id, string Name);
     private record Order(Guid Key, string Label);
+    private record Workspace(Guid Id, List<WorkItem> Items);
+    private record WorkItem(Guid Id, string Name);
 
     private static string SerializeDocument(List<Entry> entries) {
       return JsonSerializer.Serialize(new {

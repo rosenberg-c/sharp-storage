@@ -2,14 +2,14 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SharpStorage {
+namespace SharpStorage.src {
   internal sealed record StorageDocument<TEntry>(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
     [property: JsonPropertyName("data")] List<TEntry>? Data
   );
 }
 
-namespace SharpStorage {
+namespace SharpStorage.src {
   public class StorageRepository<TEntry> {
     private readonly string _path;
     private readonly Func<TEntry, Guid> _getId;
@@ -65,11 +65,23 @@ namespace SharpStorage {
       return document.Data;
     }
 
-    private async Task SaveAsync(List<TEntry> entry) {
-      StorageDocument<TEntry> document = new(_schemaVersion, entry);
+    private async Task SaveAsync(List<TEntry> entries) {
+      StorageDocument<TEntry> document = new(_schemaVersion, entries);
       string json = JsonSerializer.Serialize(document, options);
+      string path = Path.GetFullPath(_path);
+      string tempPath = Path.Combine(Path.GetDirectoryName(path)!,
+        $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp"
+      );
 
-      await File.WriteAllTextAsync(_path, json);
+      try {
+        await File.WriteAllTextAsync(tempPath, json);
+        File.Move(tempPath, path, overwrite: true);
+      }
+      finally {
+        if (File.Exists(tempPath)) {
+          File.Delete(tempPath);
+        }
+      }
     }
 
     public async Task AddAsync(TEntry entry) {
@@ -145,6 +157,48 @@ namespace SharpStorage {
         }
 
         return matches.Count == 0 ? default : matches[0];
+      }
+      finally {
+        _ = gate.Release();
+      }
+    }
+
+    public async Task<bool> UpdateAsync(Guid id, Func<TEntry, TEntry> update) {
+      ArgumentNullException.ThrowIfNull(update);
+
+      SemaphoreSlim gate = StorageFileLocks.For(_path);
+      await gate.WaitAsync();
+      try {
+        List<TEntry> entries = await LoadAsync();
+        int index = -1;
+        for (int i = 0; i < entries.Count; i++) {
+          if (_getId(entries[i]) != id) {
+            continue;
+          }
+
+          if (index != -1) {
+            throw new InvalidOperationException(
+              $"ID {id} matches multiple entries."
+            );
+          }
+
+          index = i;
+        }
+
+        if (index == -1) {
+          return false;
+        }
+
+        TEntry updated = update(entries[index]);
+        if (updated is null || _getId(updated) != id) {
+          throw new InvalidOperationException(
+            $"The update must return an entry with ID {id}."
+          );
+        }
+
+        entries[index] = updated;
+        await SaveAsync(entries);
+        return true;
       }
       finally {
         _ = gate.Release();
