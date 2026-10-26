@@ -75,7 +75,15 @@ namespace SharpStorage.src {
 
       try {
         await File.WriteAllTextAsync(tempPath, json);
-        File.Move(tempPath, path, overwrite: true);
+        if (File.Exists(path)) {
+          if (!OperatingSystem.IsWindows()) {
+            File.SetUnixFileMode(tempPath, File.GetUnixFileMode(path));
+          }
+
+          File.Replace(tempPath, path, null);
+        } else {
+          File.Move(tempPath, path);
+        }
       }
       finally {
         if (File.Exists(tempPath)) {

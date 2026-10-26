@@ -324,6 +324,25 @@ namespace SharpStorage.Tests {
     }
 
     [Fact]
+    public async Task UpdateAsync_PreservesExistingFilePermissions() {
+      if (OperatingSystem.IsWindows()) {
+        return;
+      }
+
+      string path = NewFile("private.json");
+      StorageRepository<Entry> repo = new(path, static e => e.Id);
+      await repo.AddAsync(new Entry(FirstId, "original"));
+      UnixFileMode privateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+      File.SetUnixFileMode(path, privateMode);
+
+      Assert.True(await repo.UpdateAsync(FirstId,
+        entry => entry with { Name = "updated" }));
+
+      Assert.Equal(privateMode, File.GetUnixFileMode(path));
+      Assert.Equal(new Entry(FirstId, "updated"), await repo.GetAsync(FirstId));
+    }
+
+    [Fact]
     public async Task UpdateAsync_RejectsLegacyDuplicateIds_WithoutWriting() {
       string path = NewFile("duplicate-update.json");
       string before = SerializeDocument([
