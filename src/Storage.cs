@@ -3,13 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SharpStorage {
-  public enum CreateStatus {
-    Created,
-    Duplicate
-  }
-}
-
-namespace SharpStorage {
   internal sealed record StorageDocument<TEntry>(
     [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
     [property: JsonPropertyName("data")] List<TEntry>? Data
@@ -19,12 +12,12 @@ namespace SharpStorage {
 namespace SharpStorage {
   public class StorageRepository<TEntry> {
     private readonly string _path;
-    private readonly Func<TEntry, int> _getId;
+    private readonly Func<TEntry, Guid> _getId;
     private readonly int _schemaVersion;
 
     public StorageRepository(
       string filename,
-      Func<TEntry, int> getId,
+      Func<TEntry, Guid> getId,
       int schemaVersion = 1
     ) {
       ArgumentException.ThrowIfNullOrWhiteSpace(filename);
@@ -84,7 +77,7 @@ namespace SharpStorage {
       await gate.WaitAsync();
       try {
         List<TEntry> entries = await LoadAsync();
-        int id = _getId(entry);
+        Guid id = _getId(entry);
         if (entries.Any(existing => _getId(existing) == id)) {
           throw new InvalidOperationException(
             $"An entry with ID {id} already exists."
@@ -99,64 +92,28 @@ namespace SharpStorage {
       }
     }
 
-    public async Task<TEntry> CreateAsync(Func<int, TEntry> factory) {
+    public async Task<TEntry> CreateAsync(Func<Guid, TEntry> factory) {
       ArgumentNullException.ThrowIfNull(factory);
 
       SemaphoreSlim gate = StorageFileLocks.For(_path);
       await gate.WaitAsync();
       try {
         List<TEntry> entries = await LoadAsync();
-        int maxId = entries.Select(_getId).Where(static id => id > 0)
-          .DefaultIfEmpty(0).Max();
-        int nextId = checked(maxId + 1);
+        Guid id;
+        do {
+          id = Guid.NewGuid();
+        } while (entries.Any(existing => _getId(existing) == id));
 
-        TEntry assigned = factory(nextId);
-        if (assigned is null || _getId(assigned) != nextId) {
+        TEntry assigned = factory(id);
+        if (assigned is null || _getId(assigned) != id) {
           throw new InvalidOperationException(
-            $"The entry factory must return an entry with ID {nextId}."
+            $"The entry factory must return an entry with ID {id}."
           );
         }
 
         entries.Add(assigned);
         await SaveAsync(entries);
         return assigned;
-      }
-      finally {
-        _ = gate.Release();
-      }
-    }
-
-    public async Task<CreateStatus> TryCreateAsync(
-      Func<int, TEntry> factory,
-      Func<TEntry, bool> isDuplicate
-    ) {
-      ArgumentNullException.ThrowIfNull(factory);
-      ArgumentNullException.ThrowIfNull(isDuplicate);
-
-      SemaphoreSlim gate = StorageFileLocks.For(_path);
-      await gate.WaitAsync();
-
-      try {
-        List<TEntry> entries = await LoadAsync();
-
-        if (entries.Any(isDuplicate)) {
-          return CreateStatus.Duplicate;
-        }
-
-        int maxId = entries.Select(_getId).Where(static id => id > 0)
-          .DefaultIfEmpty(0).Max();
-        int nextId = checked(maxId + 1);
-        TEntry created = factory(nextId);
-
-        if (created is null || _getId(created) != nextId) {
-          throw new InvalidOperationException(
-            $"The entry factory must return an entry with ID {nextId}."
-          );
-        }
-
-        entries.Add(created);
-        await SaveAsync(entries);
-        return CreateStatus.Created;
       }
       finally {
         _ = gate.Release();
@@ -174,7 +131,7 @@ namespace SharpStorage {
       }
     }
 
-    public async Task<TEntry?> GetAsync(int id) {
+    public async Task<TEntry?> GetAsync(Guid id) {
       SemaphoreSlim gate = StorageFileLocks.For(_path);
       await gate.WaitAsync();
       try {
@@ -199,7 +156,7 @@ namespace SharpStorage {
       await gate.WaitAsync();
       try {
         List<TEntry> entries = await LoadAsync();
-        int id = _getId(entry);
+        Guid id = _getId(entry);
         int singleIndex = -1;
         for (int i = 0; i < entries.Count; i++) {
           if (_getId(entries[i]) != id) {
@@ -228,7 +185,7 @@ namespace SharpStorage {
       }
     }
 
-    public async Task<bool> DeleteAsync(int id) {
+    public async Task<bool> DeleteAsync(Guid id) {
       SemaphoreSlim gate = StorageFileLocks.For(_path);
       await gate.WaitAsync();
       try {

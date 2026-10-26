@@ -1,11 +1,11 @@
 # SharpStorage
 
-A small .NET 10 JSON file repository for entries with integer IDs. The public API lives in the `SharpStorage` namespace. Data files contain `schemaVersion` and `data`; the repository rejects unsupported schema versions.
+A small .NET 10 JSON file repository for entries with GUID IDs. The public API lives in the `SharpStorage` namespace. `CreateAsync` generates a new GUID independently of entry content, so identical titles remain separate entries. Storage rejects ID collisions but does not apply application-specific duplicate rules. Data files contain `schemaVersion` and `data`; the repository rejects unsupported schema versions.
 
 ```csharp
 using SharpStorage;
 
-public record Note(int Id, string Text);
+public record Note(Guid Id, string Text);
 
 var storage = new StorageRepository<Note>("notes.json", note => note.Id);
 Note note = await storage.CreateAsync(id => new Note(id, "Hello"));
