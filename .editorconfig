@@ -1,0 +1,49 @@
+root = true
+
+[*.cs]
+
+# ReSharper formatting width (matches Neovim's colorcolumn)
+max_line_length = 80
+resharper_csharp_wrap_before_invocation_rpar = true
+
+# Indentation
+indent_style = space
+indent_size = 2
+
+# Line endings
+end_of_line = lf
+insert_final_newline = true
+
+# Opening braces on the same line
+csharp_new_line_before_open_brace = none
+csharp_new_line_before_else = false
+
+# Match ReSharper's indentation inside braced switch cases
+csharp_indent_case_contents_when_block = false
+
+# Require curly braces for if, else, for, foreach, while, etc.
+csharp_prefer_braces = true:error
+
+# Enforce with compiler diagnostic IDE0011
+dotnet_diagnostic.IDE0011.severity = error
+
+# Keep at most one blank line in a row
+dotnet_style_allow_multiple_blank_lines_experimental = false
+dotnet_diagnostic.IDE2000.severity = warning
+
+# Always use braces for if, for, while, etc.
+csharp_prefer_braces = true:error
+
+# Prefer var only when type is obvious
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# Remove unnecessary imports
+dotnet_diagnostic.IDE0005.severity = warning
+
+# Enforce braces
+dotnet_diagnostic.IDE0011.severity = error
+
+# Enforce formatting
+dotnet_diagnostic.IDE0055.severity = warning
