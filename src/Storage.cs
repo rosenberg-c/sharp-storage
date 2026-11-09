@@ -213,6 +213,62 @@ namespace SharpStorage.src {
       }
     }
 
+    public async Task UpdatePairAsync(
+      Guid fromId,
+      Guid toId,
+      Func<TEntry, TEntry, (TEntry From, TEntry To)> update
+    ) {
+      ArgumentNullException.ThrowIfNull(update);
+      if (fromId == toId) {
+        throw new ArgumentException("Entry IDs must differ.");
+      }
+
+      SemaphoreSlim gate = StorageFileLocks.For(_path);
+      await gate.WaitAsync();
+      try {
+        List<TEntry> entries = await LoadAsync();
+        int fromIndex = -1;
+        int toIndex = -1;
+        for (int i = 0; i < entries.Count; i++) {
+          Guid id = _getId(entries[i]);
+          if (id == fromId) {
+            if (fromIndex != -1) {
+              throw new InvalidOperationException(
+                $"ID {fromId} matches multiple entries."
+              );
+            }
+
+            fromIndex = i;
+          } else if (id == toId) {
+            if (toIndex != -1) {
+              throw new InvalidOperationException(
+                $"ID {toId} matches multiple entries."
+              );
+            }
+
+            toIndex = i;
+          }
+        }
+
+        if (fromIndex == -1 || toIndex == -1) {
+          throw new KeyNotFoundException("Entry not found.");
+        }
+
+        (TEntry from, TEntry to) = update(entries[fromIndex], entries[toIndex]);
+        if (from is null || to is null
+          || _getId(from) != fromId || _getId(to) != toId) {
+          throw new InvalidOperationException("Entry IDs must not change.");
+        }
+
+        entries[fromIndex] = from;
+        entries[toIndex] = to;
+        await SaveAsync(entries);
+      }
+      finally {
+        _ = gate.Release();
+      }
+    }
+
     public async Task<bool> UpdateAsync(TEntry entry) {
       SemaphoreSlim gate = StorageFileLocks.For(_path);
       await gate.WaitAsync();

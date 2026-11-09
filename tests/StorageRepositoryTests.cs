@@ -357,6 +357,91 @@ namespace SharpStorage.Tests {
       Assert.Equal(before, await File.ReadAllTextAsync(path));
     }
 
+    [Fact]
+    public async Task UpdatePairAsync_UpdatesBothEntries_AndPersistsTogether() {
+      string path = NewFile("pair.json");
+      StorageRepository<Entry> repo = new(path, static e => e.Id);
+      await repo.AddAsync(new Entry(FirstId, "one"));
+      await repo.AddAsync(new Entry(SecondId, "two"));
+
+      await repo.UpdatePairAsync(FirstId, SecondId, (source, to) => (
+        source with { Name = "updated one" },
+        to with { Name = "updated two" }
+      ));
+
+      StorageRepository<Entry> reader = new(path, static e => e.Id);
+      Assert.Equal([
+        new Entry(FirstId, "updated one"),
+        new Entry(SecondId, "updated two")
+      ], await reader.GetAllAsync());
+    }
+
+    [Fact]
+    public async Task UpdatePairAsync_RejectsInvalidInputs_WithoutWriting() {
+      string path = NewFile("invalid-pair.json");
+      StorageRepository<Entry> repo = new(path, static e => e.Id);
+      await repo.AddAsync(new Entry(FirstId, "one"));
+      await repo.AddAsync(new Entry(SecondId, "two"));
+      string before = await File.ReadAllTextAsync(path);
+
+      await Assert.ThrowsAsync<ArgumentNullException>(() =>
+        repo.UpdatePairAsync(FirstId, SecondId, null!)
+      );
+      await Assert.ThrowsAsync<ArgumentException>(() =>
+        repo.UpdatePairAsync(FirstId, FirstId, (source, to) => (source, to))
+      );
+      await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+        repo.UpdatePairAsync(Guid.NewGuid(), SecondId, (_, _) =>
+          throw new InvalidOperationException("Callback should not run"))
+      );
+      await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+        repo.UpdatePairAsync(FirstId, Guid.NewGuid(), (_, _) =>
+          throw new InvalidOperationException("Callback should not run"))
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdatePairAsync(FirstId, SecondId, (_, to) => (null!, to))
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdatePairAsync(FirstId, SecondId, (source, _) => (source, null!))
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdatePairAsync(FirstId, SecondId, (source, to) => (
+          source with { Id = Guid.NewGuid() }, to))
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdatePairAsync(FirstId, SecondId, (source, to) => (
+          source, to with { Id = Guid.NewGuid() }))
+      );
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdatePairAsync(FirstId, SecondId, (_, _) =>
+          throw new InvalidOperationException("failed"))
+      );
+
+      Assert.Equal(before, await File.ReadAllTextAsync(path));
+      Assert.Empty(Directory.GetFiles(_dir, "*.tmp"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UpdatePairAsync_RejectsDuplicateIds_WithoutWriting(bool duplicateFrom) {
+      string path = NewFile("duplicate-pair.json");
+      Entry duplicate = duplicateFrom
+        ? new Entry(FirstId, "duplicate one")
+        : new Entry(SecondId, "duplicate two");
+      string before = SerializeDocument([
+        new Entry(FirstId, "one"), new Entry(SecondId, "two"), duplicate
+      ]);
+      await File.WriteAllTextAsync(path, before);
+      StorageRepository<Entry> repo = new(path, static e => e.Id);
+
+      await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        repo.UpdatePairAsync(FirstId, SecondId, (_, _) =>
+          throw new InvalidOperationException("Callback should not run"))
+      );
+      Assert.Equal(before, await File.ReadAllTextAsync(path));
+    }
+
     private record Entry(Guid Id, string Name);
     private record Order(Guid Key, string Label);
     private record Workspace(Guid Id, List<WorkItem> Items);
